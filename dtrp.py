@@ -1,6 +1,7 @@
 import socket
 import argparse
 import sys
+import signal
 from struct import *
 
 class PortInRangeAction(argparse.Action):
@@ -24,6 +25,158 @@ class ValidMethodAction(argparse.Action):
         setattr(namespace, self.dest, methods[method])
 
 
+# Section to implement and develope the use of headers etc.
+
+header_format = '!IIHH'
+#creates a packet with header information and application data
+    #the input arguments are sequence number, acknowledgment number
+    #flags (we only use 4 bits),  receiver window and application data 
+    #struct.pack returns a bytes object containing the header values
+    #packed according to the header_format !IIHH
+
+def packet_create(seq, ack, flags, win, data):
+    
+    header = pack(header_format, seq, ack, flags, win)
+    
+    packet = header + data
+    
+    return packet.encode()
+
+def header_parse(header):
+    
+    msg_header = unpack(header_format, header[:12])
+    
+    return msg_header
+
+def flags_parse(flags):
+
+    syn = flags & (1 << 3)
+    ack = flags & (1 << 2)
+    fin = flags & (1 << 1)
+    res = flags & (1 << 0)
+
+    return syn, ack, fin, res
+
+def three_way_handshake(server_socket, client_socket, client_address, args):
+    
+    if args.server:
+        server_socket.settimeout(0.5)
+        try:
+            # Server receives SYN handshake
+            msg = server_socket.recv(1472).decode()
+            seq, ack, flags, win = header_parse(msg)
+            flags = flags_parse(flags)
+            
+            if seq == 1 and flags[0] == 8:
+                print('+[SYN]')
+                # Server sends SYN-ACK handshake
+                
+                flags = 12 # 1 1 0 0 (SYN, ACK)
+                msg = packet_create(0, 0, flags, 0, b'')
+                client_socket.send(msg)
+                print('->[SYN-ACK]')
+                
+                # Server receives ACK handshake
+                msg = server_socket.recv(1472).decode()
+                seq, ack, flags, win = header_parse(msg)
+                if ack == 1:
+                    print(f'+[ACK]\nClient {client_address} has connected.')
+                    handle_method(None, client_socket, None, args)
+
+        except socket.timeout:
+            print('Error communicating with client, try again.')
+            client_socket.close()
+            server_socket.close()
+            server_start(args)
+            
+    elif args.client:
+        client_socket.settimeout(0.5)
+        try:
+            # Client sends SYN handshake
+            flags = 8 # 1 0 0 0 (SYN)
+            msg = packet_create(1, 0, flags, 0, b'') # Sender sends SYN with sequence 1
+            client_socket.send(msg)
+
+            # Client receives SYN-ACK handshake
+            msg = client_socket.recv(1472).decode()
+            seq, ack, flags, win = header_parse(msg)
+            flags = flags_parse(flags)
+
+            if flags[0] == 8 and flags[1] == 4:
+                # Client sends ACK
+                flags = 0
+                msg = packet_create(0, 1, flags, 0, b'')
+                client_socket.send(msg)
+
+                handle_method(None, client_socket, None, args)
+
+        except socket.timeout:
+            print('Error communication with server, try again')
+            client_socket.close()
+            sys.exit(1)
+
+def two_way_byeshake(server_socket, client_socket, client_address, args):
+
+    if args.server:
+        server_socket.settimeout(0.5)
+        try:
+            msg = server_socket.recv(1472).decode()
+
+            seq, ack, flags, win = header_parse(msg)
+            flags = flags_parse(flags)
+
+            if flags[2] == 2:
+                print('+[FIN]')
+
+                flags = 0
+                msg = packet_create(0, 1, flags, 0, 0)
+                client_socket.send(msg)
+        except socket.timeout:
+            print('')
+
+    elif args.client:
+        client_socket.settimeout(0.5)
+# Section for starting server and client
+
+def server_start(args: argparse.Namespace):
+    
+    server_host = args.ip
+    server_port = args.port
+    
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server_socket:
+        
+        server_socket.bind((server_host,server_port))
+        server_socket.listen(1)
+        
+        print('---------------------------------------')
+        print(f'Server is listening on port {server_port}')
+        print('---------------------------------------')
+    
+        try:
+            while True:
+                client_socket, client_address = server_socket.accept()
+                three_way_handshake(server_socket, client_socket, client_address, args)
+                two_way_byeshake(server_socket, client_socket, client_address, args)
+        
+        except KeyboardInterrupt:
+            print('Closing server')
+            server_socket.close()
+            sys.exit(1)
+    
+def client_connect(args: argparse.Namespace):
+
+    server_host = args.ip
+    server_port = args.port
+
+    print('----------------------------------------------------')
+    print(f'Connecting to server {server_host}:{server_port}')
+    print('----------------------------------------------------')
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as client_socket:
+        client_socket.connect((server_host,server_port))
+        three_way_handshake(None, client_socket, None, args)
+        two_way_byeshake(None, client_socket, None, args)
+def client_send(client_socket, args: argparse.Namespace):
 
 def main():
     
@@ -50,77 +203,3 @@ def main():
     
     args = parser.parse_args()
     
-# Section to implement and develope the use of headers etc.
-
-header_format = '!IIHH'
-#creates a packet with header information and application data
-    #the input arguments are sequence number, acknowledgment number
-    #flags (we only use 4 bits),  receiver window and application data 
-    #struct.pack returns a bytes object containing the header values
-    #packed according to the header_format !IIHH
-
-def packet_create(seq, ack, flags, win, data):
-    
-    header = pack(header_format, seq, ack, flags, win)
-    
-    packet = header + data
-    
-    return packet.encode()
-
-def header_parse(header):
-    
-    msg_header = unpack(header_format, header[:12])
-    
-    return msg_header
-    
-
-def connection_handshake(server_socket, client_socket):
-    
-    if server_socket:
-        try:
-            msg = server_socket.recv(1472).decode()
-            
-            seq, ack, flags, win = header_parse(msg)
-            flags = flags_parse(flags)
-            
-            if seq == 1 and flags[0] == 1:
-                flags = 12 # 1 1 0 0 (syn, ack)
-                msg = packet_create(0, 0, flags, 0, b'')
-                
-                client_socket.send(msg)
-                
-                msg = server_socket.recv(1472).decode()
-                
-                
-        except:
-            
-    elif client_socket:
-        flags = 8 # 1 0 0 0 (syn)
-        packet_create(1, 0, flag, 0, b'') # Sender sends SYN with sequence 1
-# Section for starting server and client
-
-def server_start(args: argparse.Namespace):
-    
-    server_host = args.ip
-    server_port = args.port
-    
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server_socket:
-        
-        server_socket.bind((server_host,server_port))
-        server_socket.listen(1)
-        
-        print('------------------------------------------------')
-        print(f'A simpleperf server is listening on port {server_port}')
-        print('------------------------------------------------')
-    
-        try:
-            while True:
-                
-                client_socket, client_address = server_socket.accept()
-                connection_handshake(server_socket, client_socket)
-                
-def server_handle_client(conn, addr, args: argparse.Namespace):
-    
-def client_connect(args: argparse.Namespace):
-    
-def client_send(client_socket, args: argparse.Namespace):
