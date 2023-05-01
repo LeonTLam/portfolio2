@@ -1,6 +1,7 @@
 import socket
 import argparse
 import sys
+from struct import *
 
 class PortInRangeAction(argparse.Action):
     def __call__(self, parser, namespace, port, option_string=None):
@@ -35,14 +36,39 @@ def main():
     parser.add_argument(
         '-r', '--reliable_method', type=str, default='stop_and_wait', action=ValidMethodAction, help="Enter one of three reliability functions (stop_and_wait, GBN, GBN-SR)")
     
-    serverParser = parser.add_argument_group('Server')
+    server_parser = parser.add_argument_group('Server')
     
-    serverParser.add_argument(
+    server_parser.add_argument(
         '-s', '--server', action='store_true', help='Invoke as server')
     
-    clientParser = parser.add_argument_group('Client')
+    client_parser = parser.add_argument_group('Client')
     
-    clientParser.add_argument(
+    client_parser.add_argument(
         '-f', '--file', type=str, default='file_to_transfer.jpg', help="Enter file from client to be transfered")
     
     args = parser.parse_args()
+    
+# Section to implement and develope the use of headers etc.
+
+header_format = '!IIHH'
+#creates a packet with header information and application data
+    #the input arguments are sequence number, acknowledgment number
+    #flags (we only use 4 bits),  receiver window and application data 
+    #struct.pack returns a bytes object containing the header values
+    #packed according to the header_format !IIHH
+    
+# Section for starting server and client
+
+def server_start(args: argparse.Namespace):
+    
+    server_host = args.ip
+    server_port = args.port
+    
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server_socket:
+        server
+    
+def server_handle_client(conn, addr, args: argparse.Namespace):
+    
+def client_connect(args: argparse.Namespace):
+    
+def client_send(client_socket, args: argparse.Namespace):
