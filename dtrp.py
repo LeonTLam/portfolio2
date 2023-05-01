@@ -23,6 +23,8 @@ class ValidMethodAction(argparse.Action):
             raise argparse.ArgumentError(self, f'{method} is an invalid method')
         setattr(namespace, self.dest, methods[method])
 
+
+
 def main():
     
     parser = argparse.ArgumentParser(description="File transferring application over 'DRTP'.")
@@ -56,7 +58,45 @@ header_format = '!IIHH'
     #flags (we only use 4 bits),  receiver window and application data 
     #struct.pack returns a bytes object containing the header values
     #packed according to the header_format !IIHH
+
+def packet_create(seq, ack, flags, win, data):
     
+    header = pack(header_format, seq, ack, flags, win)
+    
+    packet = header + data
+    
+    return packet.encode()
+
+def header_parse(header):
+    
+    msg_header = unpack(header_format, header[:12])
+    
+    return msg_header
+    
+
+def connection_handshake(server_socket, client_socket):
+    
+    if server_socket:
+        try:
+            msg = server_socket.recv(1472).decode()
+            
+            seq, ack, flags, win = header_parse(msg)
+            flags = flags_parse(flags)
+            
+            if seq == 1 and flags[0] == 1:
+                flags = 12 # 1 1 0 0 (syn, ack)
+                msg = packet_create(0, 0, flags, 0, b'')
+                
+                client_socket.send(msg)
+                
+                msg = server_socket.recv(1472).decode()
+                
+                
+        except:
+            
+    elif client_socket:
+        flags = 8 # 1 0 0 0 (syn)
+        packet_create(1, 0, flag, 0, b'') # Sender sends SYN with sequence 1
 # Section for starting server and client
 
 def server_start(args: argparse.Namespace):
@@ -65,8 +105,20 @@ def server_start(args: argparse.Namespace):
     server_port = args.port
     
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server_socket:
-        server
+        
+        server_socket.bind((server_host,server_port))
+        server_socket.listen(1)
+        
+        print('------------------------------------------------')
+        print(f'A simpleperf server is listening on port {server_port}')
+        print('------------------------------------------------')
     
+        try:
+            while True:
+                
+                client_socket, client_address = server_socket.accept()
+                connection_handshake(server_socket, client_socket)
+                
 def server_handle_client(conn, addr, args: argparse.Namespace):
     
 def client_connect(args: argparse.Namespace):
