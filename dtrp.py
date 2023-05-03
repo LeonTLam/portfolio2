@@ -24,6 +24,42 @@ class ValidMethodAction(argparse.Action):
             raise argparse.ArgumentError(self, f'{method} is an invalid method')
         setattr(namespace, self.dest, methods[method])
 
+def handle_method(server_socket, client_socket, client_address, args):
+    if args.server:
+        method = args.reliable_method
+        print(f'Reliable method: {method}')
+        
+        msg = server_socket.recv(1024).decode()
+        print(f'{client_address} +[method]')
+        if msg == method:
+            print('Both methods are valid, continuing...')
+            
+            flags = 0
+            msg = packet_create(0, 1, flags, 0, b'')
+            client_socket.send(msg)
+            print(f'{client_address} <-[ACK]')
+        else:
+            print(f"Client's method {msg} is different from server's method {method}\nRestarting...")
+            client_socket.close()
+            server_socket.close()
+            server_start(args)
+    
+    elif args.client:
+        method = args.reliable_method
+        print(f'Reliable method: {method}')
+        
+        client_socket.send(method.encode())
+        print(f'{args.server} <-[method]')
+        
+        msg = client_socket.recv(1024).decode()
+        seq, ack, flags, win = header_parse(msg)
+        if ack == 1:
+            print(f'{client_address} +[ACK]\nBoth methods are valid, continuing...')
+        else:
+            print(f"Your method {method} is different from server's method, make sure you are running the same method as server.\nClosing...")
+            client_socket.close()
+            sys.exit(1)            
+            
 
 # Section to implement and develope the use of headers etc.
 
@@ -68,20 +104,21 @@ def three_way_handshake(server_socket, client_socket, client_address, args):
             flags = flags_parse(flags)
             
             if seq == 1 and flags[0] == 8:
-                print('+[SYN]')
+                print(f'{client_address} +[SYN]')
                 # Server sends SYN-ACK handshake
                 
                 flags = 12 # 1 1 0 0 (SYN, ACK)
                 msg = packet_create(0, 0, flags, 0, b'')
                 client_socket.send(msg)
-                print('->[SYN-ACK]')
+                print(f'{client_address} <-[SYN-ACK]')
                 
                 # Server receives ACK handshake
                 msg = server_socket.recv(1472).decode()
                 seq, ack, flags, win = header_parse(msg)
                 if ack == 1:
-                    print(f'+[ACK]\nClient {client_address} has connected.')
-                    handle_method(None, client_socket, None, args)
+                    print(f'{client_address} +[ACK]\nClient has connected.')
+                    handle_method(server_socket, client_socket, client_address, args)
+                    server_handle_client(server_socket, client_socket, client_address, args)
 
         except socket.timeout:
             print('Error communicating with client, try again.')
@@ -96,19 +133,23 @@ def three_way_handshake(server_socket, client_socket, client_address, args):
             flags = 8 # 1 0 0 0 (SYN)
             msg = packet_create(1, 0, flags, 0, b'') # Sender sends SYN with sequence 1
             client_socket.send(msg)
-
+            print(f'{args.bind} <-[SYN]')
             # Client receives SYN-ACK handshake
             msg = client_socket.recv(1472).decode()
             seq, ack, flags, win = header_parse(msg)
             flags = flags_parse(flags)
 
             if flags[0] == 8 and flags[1] == 4:
+                print(f'{args.bind} +[SYN-ACK]')
+                
                 # Client sends ACK
                 flags = 0
                 msg = packet_create(0, 1, flags, 0, b'')
                 client_socket.send(msg)
-
-                handle_method(None, client_socket, None, args)
+                print(f'{args.bind} <-[ACK]')
+                
+                handle_method(server_socket, client_socket, client_address, args)
+                client_send(None, client_socket, None, args)
 
         except socket.timeout:
             print('Error communication with server, try again')
@@ -162,6 +203,8 @@ def server_start(args: argparse.Namespace):
             print('Closing server')
             server_socket.close()
             sys.exit(1)
+            
+def server_handle_client(server_socket, client_socket, client_address, args):
     
 def client_connect(args: argparse.Namespace):
 
