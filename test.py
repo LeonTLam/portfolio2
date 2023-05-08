@@ -22,9 +22,15 @@
 #
 #test(None, True, None)
 
-dataArray = [1, 2, 3]
-def test(seq):
-    while seq <= len(dataArray):
-        print(1)
-        seq +=1
-test(3)
+#dataArray = [1, 2, 3]
+#def test(seq):
+#    while seq <= len(dataArray):
+#        print(1)
+#        seq +=1
+#test(3)
+dataArray = [1, 1, 1, 1, 1]
+seq_num = 1
+
+while seq_num <= 3:
+    print(seq_num)
+    seq_num += 1

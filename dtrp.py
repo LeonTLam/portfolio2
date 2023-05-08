@@ -1,7 +1,7 @@
 import socket
 import argparse
 import sys
-import signal
+import time
 from struct import *
 
 
@@ -229,6 +229,7 @@ def server_handle_client(server_socket, client_socket, client_address, args):
     
     dataArray = []
     def send_and_wait(seq_num):
+        global dataArray
         while True:
             try:
                 msg = server_socket.recv(packet_size).decode()
@@ -246,9 +247,16 @@ def server_handle_client(server_socket, client_socket, client_address, args):
                     seq_num += 1
                 
                 elif seq != seq_num:
-                    msg = packet_create(seq_num-1, 1, 0, 0, b'')
-                    client_socket.send(msg)
-                    print(f'{client_address} +[DUPACK #{seq_num - 1}]')
+                    # To prevent a DUPACK of the first data-packet, since the packet will contain SEQ = 0 and ACK = 1 (Considered an ACK, wrong)
+                    if seq_num == 1:
+                        # Will reset and receive packet just before client resends.
+                        time.sleep(0.3) 
+                        raise socket.timeout
+                    else:
+                        msg = packet_create(seq_num-1, 1, 0, 0, b'')
+                        client_socket.send(msg)
+                        print(f'{client_address} +[DUPACK #{seq_num - 1}]')
+                        send_and_wait()
                 
                 elif flags[2] == 2:
                     print(f'{client_address} +[FIN]')
@@ -262,8 +270,7 @@ def server_handle_client(server_socket, client_socket, client_address, args):
                     break
             except socket.timeout:
                 send_and_wait(seq_num)            
-        return dataArray
-    
+        
     with open(args.file, 'wb') as file:
         for data in dataArray:
             file.write(data)
@@ -299,11 +306,70 @@ def client_send(client_socket, args: argparse.Namespace):
                 sys.exit(1)
     
     def send_and_wait(seq_num):
-        for seq_num in range(len(dataArray)):
+        while seq_num <= len(dataArray):
             try:
-                msg = packet_create(seq_num, 0, 0, 1, dataArray[seq_num])
+                msg = packet_create(seq_num, 0, 0, 1, dataArray[seq_num-1])
                 client_socket.send(msg)
-            except:
+                print(f'{args.bind} <-[PACKET #{seq_num}]')
+                
+                msg = client_socket.recv(packet_size).decode()
+                seq, ack, flags, win= header_parse(msg)
+                
+                if seq == 0 and ack == 1:
+                    print(f'{args.bind} +[ACK]')
+                    seq_num += 1
+                
+                elif seq > 0 and ack == 1:
+                    print(f'{args.bind} +[DUPACK #{seq}]')
+                    send_and_wait(seq+1)
+            except socket.timeout:
+                send_and_wait(seq_num)
+        try:
+            flags = 2
+            msg = packet_create(0, 0, flags, 0, b'')
+            client_socket.send(msg)
+            print(f'{args.bind} <-[FIN]')
+            
+            msg = client_socket.recv(packet_size).decode()
+            seq, ack, flags, win= header_parse(msg)
+            
+            if ack == 1:
+                print(f'{args.bind} +[ACK]\nClosing...')
+                client_socket.close()
+                sys.exit(1)
+        except socket.timeout:
+            send_and_wait(seq_num)        
+    
+    def go_back_n(seq_temp):
+        seq_win = args.win
+        seq_first = seq_temp
+        seq_n = seq_first + (seq_win - 1)
+        
+        
+        while True:
+            while seq_first <= seq_n:
+                msg = packet_create(seq_first, 0, 0, (seq_n+1)-seq_first, dataArray[seq_first-1])
+                client_socket.send(msg)
+                print(f'{args.bind} <-[PACKET #{seq_first}]')
+                seq_first += 1
+                if seq_first == len(dataArray):
+                    seq_n = len(dataArray)
+                    break
+                
+            while seq_temp <= seq_n:
+                try:
+                    msg = client_socket.recv(packet_size).decode()
+                    seq, ack, flags, win= header_parse(msg)
+                    
+                    if seq == 0 and ack == 1:
+                        print(f'{args.bind} +[ACK]')
+                        seq_temp += 1
+                except socket.timeout:
+                    go_back_n(seq_temp)
+
+            if seq_first == seq_n:
+                seq_n += seq_win
+                seq_first += 1
 def main():
     
     parser = argparse.ArgumentParser(description="File transferring application over 'DRTP'.")
@@ -326,6 +392,8 @@ def main():
     
     client_parser.add_argument(
         '-f', '--file', type=str, default='file_to_transfer.jpg', help="Enter file from client to be transfered")
+    client_parser.add_argument(
+        '-w', '--window', type=int, default='3', help="Enter window size of datapackets (default = 3 for GBN and GBN-SR)")
     
     args = parser.parse_args()
     
