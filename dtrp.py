@@ -138,6 +138,7 @@ def three_way_handshake(server_socket, client_socket, client_address, args):
             msg = packet_create(1, 0, flags, 0, b'') # Sender sends SYN with sequence 1
             client_socket.send(msg)
             print(f'{args.bind} <-[SYN]')
+            
             # Client receives SYN-ACK handshake
             msg = client_socket.recv(packet_size).decode()
             seq, ack, flags, win = header_parse(msg)
@@ -146,11 +147,7 @@ def three_way_handshake(server_socket, client_socket, client_address, args):
             if flags[0] == 8 and flags[1] == 4:
                 print(f'{args.bind} +[SYN-ACK]')
                 
-                # Client sends ACK
-                flags = 0
-                msg = packet_create(0, 1, flags, 0, b'')
-                client_socket.send(msg)
-                print(f'{args.bind} <-[ACK]')
+                send_ack(client_socket, None, args)
                 
                 handle_method(None, client_socket, None, args)
 
@@ -171,10 +168,7 @@ def two_way_byeshake(server_socket, client_socket, client_address, args):
             if flags[2] == 2:
                 print(f'{client_address} +[FIN]')
 
-                flags = 0
-                msg = packet_create(0, 1, flags, 0, 0)
-                client_socket.send(msg)
-                print(f'{client_address} <-[ACK]')
+                send_ack(client_socket, client_address)
                 
                 print(f'Client {client_address} has disconnected')
                 client_socket.close()
@@ -198,8 +192,22 @@ def two_way_byeshake(server_socket, client_socket, client_address, args):
                 sys.exit(1)
         except socket.timeout:
             two_way_byeshake(None,client_socket,None,args)
-# Section for starting server and client
 
+def send_ack(client_socket, client_address, args):
+    if args.server:
+        msg = packet_create(0, 1, 0, 0, b'')
+        client_socket.send(msg)
+        print(f'{client_address} <-[ACK]')
+    elif args.client:
+        msg = packet_create(0, 1, 0, 0, b'')
+        client_socket.send(msg)
+        print(f'{args.bind} <-[ACK]')
+    
+def send_dupack(client_socket, client_address, seq_num):
+    msg = packet_create(seq_num-1, 1, 0, 0, b'')
+    client_socket.send(msg)
+    print(f'{client_address} +[DUPACK #{seq_num - 1}]')
+    
 def server_start(args: argparse.Namespace):
     
     server_host = args.ip
@@ -241,36 +249,31 @@ def server_handle_client(server_socket, client_socket, client_address, args):
                     data_msg = msg[12:]
                     dataArray.append(data_msg)
                     
-                    msg = packet_create(0, 1, 0, 0, b'')
-                    client_socket.send(msg)
-                    print(f'{client_address} +[ACK #{seq_num}]')
+                    send_ack(client_socket, client_address)
                     seq_num += 1
                 
                 elif seq != seq_num:
                     # To prevent a DUPACK of the first data-packet, since the packet will contain SEQ = 0 and ACK = 1 (Considered an ACK, wrong)
                     if seq_num == 1:
-                        # Will reset and receive packet just before client resends.
+                        # Will force timeout for both server and client to resend first packet
                         time.sleep(0.3) 
                         raise socket.timeout
                     else:
-                        msg = packet_create(seq_num-1, 1, 0, 0, b'')
-                        client_socket.send(msg)
-                        print(f'{client_address} +[DUPACK #{seq_num - 1}]')
-                        send_and_wait()
+                        send_dupack(client_socket, client_address, seq_num)
+                        send_and_wait(seq_num)
                 
                 elif flags[2] == 2:
-                    print(f'{client_address} +[FIN]')
-
-                    msg = packet_create(0, 1, 0, 0, 0)
-                    client_socket.send(msg)
-                    print(f'{client_address} <-[ACK]')
-                    
-                    print(f'Client {client_address} has disconnected')
-                    client_socket.close()
+                    two_way_byeshake(server_socket,client_socket,client_address,args)
                     break
             except socket.timeout:
                 send_and_wait(seq_num)            
-        
+    
+    def go_back_n(seq_num):
+        global dataArray
+        while True:
+            try:
+                
+    
     with open(args.file, 'wb') as file:
         for data in dataArray:
             file.write(data)
@@ -307,6 +310,7 @@ def client_send(client_socket, args: argparse.Namespace):
     
     def send_and_wait(seq_num):
         while seq_num <= len(dataArray):
+            
             try:
                 msg = packet_create(seq_num, 0, 0, 1, dataArray[seq_num-1])
                 client_socket.send(msg)
@@ -322,41 +326,25 @@ def client_send(client_socket, args: argparse.Namespace):
                 elif seq > 0 and ack == 1:
                     print(f'{args.bind} +[DUPACK #{seq}]')
                     send_and_wait(seq+1)
+            
             except socket.timeout:
                 send_and_wait(seq_num)
-        try:
-            flags = 2
-            msg = packet_create(0, 0, flags, 0, b'')
-            client_socket.send(msg)
-            print(f'{args.bind} <-[FIN]')
-            
-            msg = client_socket.recv(packet_size).decode()
-            seq, ack, flags, win= header_parse(msg)
-            
-            if ack == 1:
-                print(f'{args.bind} +[ACK]\nClosing...')
-                client_socket.close()
-                sys.exit(1)
-        except socket.timeout:
-            send_and_wait(seq_num)        
-    
+        
+        two_way_byeshake(None,client_socket,None,args)
+               
     def go_back_n(seq_temp):
         seq_win = args.win
         seq_first = seq_temp
-        seq_n = seq_first + (seq_win - 1)
+        seq_n = seq_first + seq_win
         
-        
-        while True:
-            while seq_first <= seq_n:
+        while seq_temp <= len(dataArray):
+            while seq_first < seq_n:
                 msg = packet_create(seq_first, 0, 0, (seq_n+1)-seq_first, dataArray[seq_first-1])
                 client_socket.send(msg)
                 print(f'{args.bind} <-[PACKET #{seq_first}]')
                 seq_first += 1
-                if seq_first == len(dataArray):
-                    seq_n = len(dataArray)
-                    break
                 
-            while seq_temp <= seq_n:
+            if seq_first == seq_n:
                 try:
                     msg = client_socket.recv(packet_size).decode()
                     seq, ack, flags, win= header_parse(msg)
@@ -364,12 +352,18 @@ def client_send(client_socket, args: argparse.Namespace):
                     if seq == 0 and ack == 1:
                         print(f'{args.bind} +[ACK]')
                         seq_temp += 1
+                    elif seq > 0 and ack == 1:
+                        print(f'{args.bind} +[DUPACK #{seq}]')
+                        go_back_n(seq+1)
                 except socket.timeout:
                     go_back_n(seq_temp)
 
-            if seq_first == seq_n:
+            if seq_temp == seq_n:
                 seq_n += seq_win
                 seq_first += 1
+        
+        two_way_byeshake(None,client_socket,None,args)
+        
 def main():
     
     parser = argparse.ArgumentParser(description="File transferring application over 'DRTP'.")

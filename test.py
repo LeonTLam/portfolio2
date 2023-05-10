@@ -31,6 +31,11 @@
 dataArray = [1, 1, 1, 1, 1]
 seq_num = 1
 
-while seq_num <= 3:
-    print(seq_num)
-    seq_num += 1
+while True:
+    while seq_num < 4:
+        print(seq_num)
+        seq_num += 1
+    
+    if seq_num == 4:
+        print('test')
+        break
