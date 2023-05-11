@@ -271,8 +271,14 @@ def server_handle_client(server_socket, client_socket, client_address, args):
     def go_back_n(seq_num):
         global dataArray
         while True:
+            win = 3 # Temporary window size, will change as soon as packet is received containing actual window size remaining
             try:
-                
+                while win != 0:
+                    msg = server_socket.recv(packet_size).decode()
+                    seq, ack, flags, win= header_parse(msg)
+                    flags = flags_parse(flags)
+            except socket.timeout:
+                go_back_n(seq_num)
     
     with open(args.file, 'wb') as file:
         for data in dataArray:
@@ -339,7 +345,7 @@ def client_send(client_socket, args: argparse.Namespace):
         
         while seq_temp <= len(dataArray):
             while seq_first < seq_n:
-                msg = packet_create(seq_first, 0, 0, (seq_n+1)-seq_first, dataArray[seq_first-1])
+                msg = packet_create(seq_first, 0, 0, (seq_n-1)-seq_first, dataArray[seq_first-1])
                 client_socket.send(msg)
                 print(f'{args.bind} <-[PACKET #{seq_first}]')
                 seq_first += 1
