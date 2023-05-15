@@ -20,7 +20,7 @@ class TestInRangeAction(argparse.Action):
 class ValidMethodAction(argparse.Action):
     def __call__(self, parser, namespace, method, option_string=None):
         method = method.strip().lower()
-        methods = {'stop_and_wait':'SAW', 'gbn':'GBN', 'gbn-sr':'GBN-SR'}
+        methods = {'saw':'SAW','stop_and_wait':'SAW', 'gbn':'GBN', 'gbn-sr':'GBN-SR'}
         if method not in methods:
             raise argparse.ArgumentError(self, f'{method} is an invalid method')
         setattr(namespace, self.dest, methods[method])
@@ -226,114 +226,124 @@ def server_start(args: argparse.Namespace):
             
 def server_handle_client(server_socket, client_socket, client_address, args):
     server_socket.settimeout(0.5)
-    
+    start_time = 0
     dataArray = []
+    
     def send_and_wait(seq_num):
         global dataArray
+        throughput_start = time.time()
         while True:
             try:
+                if start_time != 0:
+                    server_socket.settimeout(4 * (time.monotonic() - start_time))
+                    
                 msg = server_socket.recv(packet_size).decode()
                 seq, ack, flags, win= header_parse(msg)
                 flags = flags_parse(flags)
-                
-                if seq == seq_num:
-                    print(f'{client_address} +[PACKET #{seq}]')
-                    data_msg = msg[12:]
-                    dataArray.append(data_msg)
-                    
-                    send_ack(client_socket, client_address)
-                    seq_num += 1
-                
-                elif seq != seq_num:
-                    # To prevent a DUPACK of the first data-packet, since the packet will contain SEQ = 0 and ACK = 1 (Considered an ACK, wrong)
-                    if seq_num == 1:
-                        # Will force timeout for both server and client to resend first packet
-                        time.sleep(0.3) 
-                        raise socket.timeout
-                    else:
-                        send_dupack(client_socket, client_address, seq_num)
-                        send_and_wait(seq_num)
-                
-                elif flags[2] == 2:
-                    two_way_byeshake(server_socket,client_socket,client_address,args)
-                    break
+            
             except socket.timeout:
-                send_and_wait(seq_num)            
+                if seq_num == 1:
+                    # Will force timeout for both server and client to resend first packet
+                    time.sleep(0.3) 
+                else:
+                    send_dupack(client_socket, client_address, seq_num)    
+            
+            if seq == seq_num:
+                print(f'{client_address} +[PACKET #{seq}]')
+                data_msg = msg[12:]
+                dataArray.append(data_msg)
+                start_time = time.monotonic()
+                send_ack(client_socket, client_address)
+                seq_num += 1
+                
+            
+            elif seq != seq_num:
+                send_dupack(client_socket, client_address, seq_num)
+            
+            elif flags[2] == 2:
+                two_way_byeshake(server_socket,client_socket,client_address,args)
+                break
+            
+        throughput = len(dataArray) / (time.time() - throughput_start)
+        print(f"Receiver throughput (Send and wait): {throughput} packets/s")               
     
     def go_back_n(seq_num):
         global dataArray
+        throughput_start = time.time()
         while True:
             try:
-                while True:
-                    msg = server_socket.recv(packet_size).decode()
-                    seq, ack, flags, win= header_parse(msg)
-                    flags = flags_parse(flags)
+                if start_time != 0:
+                    server_socket.settimeout(4 * (time.monotonic() - start_time))
                     
-                    if seq == seq_num:
-                        print(f'{client_address} +[PACKET #{seq}]')
-                        data_msg = msg[12:]
-                        dataArray.append(data_msg)
-                        
-                        send_ack(client_socket, client_address)
-                        seq_num += 1
-                    
-                    elif seq != seq_num:
-                    # To prevent a DUPACK of the first data-packet, since the packet will contain SEQ = 0 and ACK = 1 (Considered an ACK, wrong)
-                        if seq_num == 1:
-                            # Will force timeout for both server and client to resend first packet
-                            time.sleep(0.3) 
-                            raise socket.timeout
-                        else:
-                            send_dupack(client_socket, client_address, seq_num)
-                    elif flags[2] == 2:
-                        two_way_byeshake(server_socket,client_socket,client_address,args)
-                        break
-            except socket.timeout:
-                go_back_n(seq_num)
-    
-    def go_back_n_sr(seq_num):
-        global dataArray
-        missing_packets, missing_packets_sorted = []
-        tempDataArray = {}
-        
-        while True:
-            try:    
-                if missing_packets:
-                    
-                    for item in missing_packets:
-                        if item not in missing_packets_sorted:
-                            missing_packets_sorted.append(item)
-                    
-                    for seq_missing in missing_packets_sorted:
-                        msg = server_socket.recv(packet_size).decode()
-                        seq, ack, flags, win= header_parse(msg)
-                        flags = flags_parse(flags)
-                        
-                        if seq == seq_missing:
-                            missing_packets.pop(seq_missing)
-                            print(f'{client_address} +[PACKET #{seq}]')
-                            data_msg = msg[12:]
-                            tempDataArray.update({seq:data_msg})
-                            send_ack(client_socket,client_address)
-                            
                 msg = server_socket.recv(packet_size).decode()
                 seq, ack, flags, win= header_parse(msg)
                 flags = flags_parse(flags)
+            
+            except socket.timeout:
+                send_dupack(client_socket, client_address, seq_num)
+                    
+            if seq == seq_num:
+                print(f'{client_address} +[PACKET #{seq}]')
+                data_msg = msg[12:]
+                dataArray.append(data_msg)
+                start_time = time.monotonic()
+                send_ack(client_socket, client_address)
+                seq_num += 1
+            
+            elif seq != seq_num:
+                send_dupack(client_socket, client_address, seq_num)
+            
+            elif flags[2] == 2:
+                two_way_byeshake(server_socket,client_socket,client_address,args)
+                break
+        
+        throughput = len(dataArray) / (time.time() - throughput_start)
+        print(f"Receiver throughput (Go back N): {throughput} packets/s")      
+    
+    def go_back_n_sr(seq_num):
+        global dataArray
+        missing_packets= []
+        tempDataArray = {}
+        seq_first = 1
+        seq_end = 0
+        throughput_start = time.time()
+        
+        while True:
+            try:                 
+                if start_time != 0:
+                    server_socket.settimeout(4 * (time.monotonic() - start_time))
+                msg = server_socket.recv(packet_size).decode()
+                seq, ack, flags, win= header_parse(msg)
+                if seq_end == 0:
+                    seq_end = win
+                flags = flags_parse(flags)
                 
-                if seq == seq_num:
+                if seq in missing_packets:
+                    missing_packets.remove(seq)
                     print(f'{client_address} +[PACKET #{seq}]')
                     data_msg = msg[12:]
                     tempDataArray.update({seq:data_msg})
-                    
-                    send_ack(client_socket, client_address)
+                    start_time = time.monotonic()
+                    send_ack(client_socket,client_address)
+                    seq_first += 1
+                    seq_end += 1
                     seq_num += 1
+                    
+                elif seq_first <= seq <= seq_end and seq == seq_num:
+                    print(f'{client_address} +[PACKET #{seq}]')
+                    data_msg = msg[12:]
+                    tempDataArray.update({seq:data_msg})
+                    start_time = time.monotonic()
+                    send_ack(client_socket, client_address)
+                    seq_first += 1
+                    seq_end += 1
+                    seq_num += 1
+                    
+                elif seq in tempDataArray:
+                    print(f'{client_address} +[DUPPACK #{seq}]')
+                    start_time = time.monotonic()
+                    send_ack(client_socket, client_address)
                 
-                elif seq != seq_num:
-                # To prevent a DUPACK of the first data-packet, since the packet will contain SEQ = 0 and ACK = 1 (Considered an ACK, wrong)
-                    send_dupack(client_socket,client_address,seq_num)
-                    missing_packets.append(seq_num)
-                    seq_num += 1    
-                        
                 elif flags[2] == 2:
                     two_way_byeshake(server_socket,client_socket,client_address,args)
                     break
@@ -341,8 +351,21 @@ def server_handle_client(server_socket, client_socket, client_address, args):
             except socket.timeout:
                 send_dupack(client_socket, client_address, seq_num)
                 missing_packets.append(seq_num)
-                seq_num += 1
-    
+                seq_num += 1                                            
+
+        for data in dict(sorted(tempDataArray.items(), key=lambda x: int(x[0]))):
+            dataArray.append(data)
+
+        throughput = len(dataArray) / (time.time() - throughput_start)
+        print(f"Receiver throughput (Go back N with Selective Repeat): {throughput} packets/s")  
+        
+    if args.method == 'SAW':
+        send_and_wait(1)
+    elif args.method == 'GBN':
+        go_back_n(1)
+    elif args.method == 'GBN-SR':
+        go_back_n_sr(1)
+            
     with open(args.file, 'wb') as file:
         for data in dataArray:
             file.write(data)
@@ -395,6 +418,7 @@ def client_send(client_socket, args: argparse.Namespace):
                     seq_num = seq + 1
                     
             except socket.timeout:
+                print('Timeout, retransmitting packets from current window')
                 pass    
                 
         two_way_byeshake(None,client_socket,None,args)
@@ -412,8 +436,9 @@ def client_send(client_socket, args: argparse.Namespace):
                 client_socket.send(msg)
                 print(f'{args.bind} <-[PACKET #{seq_first}]')
                 
-            try:
-                while True:
+            
+            while True:
+                try:
                     msg = client_socket.recv(packet_size)
                     seq, ack, flags, win = header_parse(msg)
                     if seq == 0 and ack == 1:
@@ -428,9 +453,9 @@ def client_send(client_socket, args: argparse.Namespace):
                         seq_num, seq_first = seq
                         seq_end = seq_first + seq_win
                         break
-            except socket.timeout:
-                print('Timeout, retransmitting packets from current window')
-                continue
+                except socket.timeout:
+                    print('Timeout, retransmitting packets from current window')
+                    pass
            
         two_way_byeshake(None,client_socket,None,args)
         
@@ -439,23 +464,21 @@ def client_send(client_socket, args: argparse.Namespace):
         seq_first = seq_num
         seq_end = seq_first + seq_win
         missing_packets, missing_packets_sorted = []
-        int_count = 0
+        
         while seq_num <= len(dataArray):
-            if missing_packets:
-                for item in missing_packets:
-                        if item not in missing_packets_sorted:
-                            missing_packets_sorted.append(item)
-                for seq_missing in missing_packets_sorted:
-                    msg = packet_create(seq_missing, 0, 0, seq_win, dataArray[seq_missing-1])
-                    client_socket.send(msg)
-                    print(f'{args.bind} <-[PACKET #{seq_first}]')
-                    
             for i in range(seq_first, seq_end):
                 if i > len(dataArray):
                     break
-                msg = packet_create(i, 0, 0, seq_win, dataArray[i-1])
-                client_socket.send(msg)
-                print(f'{args.bind} <-[PACKET #{seq_first}]')
+                elif missing_packets:
+                    for seq_missing in missing_packets:
+                        msg = packet_create(seq_missing, 0, 0, seq_win, dataArray[seq_missing-1])
+                        client_socket.send(msg)
+                        print(f'{args.bind} <-[PACKET #{seq_missing}]')
+                        missing_packets.remove(seq_missing)
+                else:
+                    msg = packet_create(i, 0, 0, seq_win, dataArray[i-1])
+                    client_socket.send(msg)
+                    print(f'{args.bind} <-[PACKET #{seq_first}]')
         
             while True:
                 try:
@@ -466,19 +489,16 @@ def client_send(client_socket, args: argparse.Namespace):
                         seq_num += 1
                         seq_first += 1
                         seq_end += 1
-                        int_count += 1
-                        if int_count % seq_win == 0:
-                            break
+                        break
                     elif seq > 0 and ack == 1:
                         print(f'{args.bind} +[DUPACK #{seq}]')
                         missing_packets.append(seq)
-                        int_count += 1
-                        if int_count % seq_win == 0:
-                            break
+                        break
                 except socket.timeout:
-                    print('Timeout, retransmitting packets from current window')
-                    continue
-           
+                    print('Timeout, packet from current window will be retransmitted')
+                    missing_packets.append(seq)
+                    break
+                    
         two_way_byeshake(None,client_socket,None,args)
         
 def main():
