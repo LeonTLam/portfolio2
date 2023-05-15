@@ -313,7 +313,6 @@ def server_handle_client(server_socket, client_socket, client_address, args):
             try:                 
                 if start_time != 0:
                     server_socket.settimeout(4 * (time.monotonic() - start_time))
-                    print(f'timeout = {4 * (time.monotonic() - start_time)}')
                 msg = client_socket.recv(packet_size)
                 packets_recv += 1
                 seq, ack, flags, win= header_parse(msg)
@@ -322,7 +321,7 @@ def server_handle_client(server_socket, client_socket, client_address, args):
                 flags = flags_parse(flags)
             
             except socket.timeout:
-                send_dupack(client_socket, client_address, seq_num)
+                send_ack(client_socket, client_address, args)
                 missing_packets.append(seq_num)
                            
             
@@ -337,7 +336,7 @@ def server_handle_client(server_socket, client_socket, client_address, args):
                 seq_end += 1
                 seq_num += 1
                 
-            elif seq_first <= seq <= seq_end and seq == seq_num:
+            elif seq_first <= seq <= seq_end or seq == seq_num:
                 print(f'{client_address} +[PACKET #{seq}]')
                 data_msg = msg[12:]
                 tempDataArray.update({seq:data_msg})
@@ -346,7 +345,6 @@ def server_handle_client(server_socket, client_socket, client_address, args):
                 seq_first += 1
                 seq_end += 1
                 seq_num += 1
-                print(f'seq_first {seq_first}\nseq_end {seq_end}\nseq_num {seq_num}')
                 
             elif seq in tempDataArray:
                 print(f'{client_address} +[DUPPACK #{seq}]')
@@ -396,8 +394,7 @@ def client_connect(args: argparse.Namespace):
 def client_send(client_socket, args: argparse.Namespace):
     
     dataArray = []
-    
-    
+
     with open(args.file, 'rb') as file:
         while True:
             try:
@@ -492,20 +489,21 @@ def client_send(client_socket, args: argparse.Namespace):
         packets_sent = 0
         
         while seq_first <= len(dataArray):
-            while seq_first <= seq_end:
+            while seq_first <= seq_end +1:
                 if seq_first > len(dataArray):
                     break
                 if missing_packets:
+                    print('Missing Packets')
                     for seq_missing in missing_packets:
                         msg = packet_create(seq_missing, 0, 0, seq_win, dataArray[seq_missing-1])
                         client_socket.send(msg)
                         packets_sent += 1
                         print(f'{args.ip} <-[PACKET #{seq_missing}]')
                         missing_packets.remove(seq_missing)
-                
+
                 msg = packet_create(seq_first, 0, 0, seq_win, dataArray[seq_first-1])
                 client_socket.send(msg)
-                start_time = time.monotonic()
+                start_time = time.time()
                 packets_sent += 1
                 print(f'{args.ip} <-[PACKET #{seq_first}]')
                 seq_first += 1
@@ -514,9 +512,10 @@ def client_send(client_socket, args: argparse.Namespace):
                 try:
                     msg = client_socket.recv(packet_size)
                     seq, ack, flags, win = header_parse(msg)
-                    client_socket.settimeout(4 * (time.monotonic() - start_time)) 
+                    client_socket.settimeout(4 * (time.time() - start_time) ) 
                     if seq == 0 and ack == 1:
                         print(f'{args.ip} +[ACK]')
+                        
                         seq_num += 1
                         seq_end += 1
                         break
@@ -526,7 +525,9 @@ def client_send(client_socket, args: argparse.Namespace):
                         break
                 except socket.timeout:
                     print('Timeout, packet from current window will be retransmitted')
-                    missing_packets.append(seq)
+                    seq_first = seq_num
+                    seq_end = seq_first + seq_win
+                    print(f'seq_first {seq_first}, seq_end {seq_end}, sec_num {seq_num}')
                     break
         throughput = packets_sent / (time.time() - throughput_start)
         print(f"Sender throughput (Go back N with Selective Repeat): {throughput} packets/s")             
