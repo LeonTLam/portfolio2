@@ -23,16 +23,24 @@ TASK 2
 	stop-and-wait, go-back-n, go-back-n-sr
 		sudo python3 simple-topolgy.py --link tc
 		mininet> net.configLinkStatus('h3', 'r2', 'loss 10%')
+		h1> python3 dtrp.py -s -f image.jpg -r saw/gbn/gbn-sr
+		h3> python3 dtrp.py -c -f img.jpg -r saw/gbn/gbn-sr (-w 5)
 
 TASK 3
-	stop-and-wait
+	stop-and-wait, go-back-n
 		sudo python3 simple-topolgy.py --link tc
 		mininet> net.configLinkStatus('h3', 'r2', 'loss 10%')
+		h1> python3 dtrp.py -s -f image.jpg -r saw/gbn
+		h3> python3 dtrp.py -c -f img.jpg -r saw/gbn (-w 5)
 
 TASK 4
 	stop-and-wait
 		sudo python3 simple-topolgy.py --link tc
 		mininet> net.configLinkStatus('h3', 'r2', 'loss 5%')
+		h1> python3 dtrp.py -s -f image.jpg -r saw
+		h3> python3 dtrp.py -c -f img.jpg -r saw
 	go-back-n
 		sudo python3 simple-topolgy.py --link tc
 		mininet> net.configLinkStatus('h3', 'r2', 'loss 5%')
+		h1> python3 dtrp.py -s -f image.jpg -r gbn
+		h3> python3 dtrp.py -c -f img.jpg -r gbn
