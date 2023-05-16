@@ -18,3 +18,21 @@ TASK 1
 		RTT 25ms, 50ms, 100ms
 			python3 dtrp.py -s -f image.jpg -r gbn-sr
 			python3 dtrp.py -c -f img.jpg -r gbn-sr -w 5,10,15
+
+TASK 2
+	stop-and-wait, go-back-n, go-back-n-sr
+		sudo python3 simple-topolgy.py --link tc
+		mininet> net.configLinkStatus('h3', 'r2', 'loss 10%')
+
+TASK 3
+	stop-and-wait
+		sudo python3 simple-topolgy.py --link tc
+		mininet> net.configLinkStatus('h3', 'r2', 'loss 10%')
+
+TASK 4
+	stop-and-wait
+		sudo python3 simple-topolgy.py --link tc
+		mininet> net.configLinkStatus('h3', 'r2', 'loss 5%')
+	go-back-n
+		sudo python3 simple-topolgy.py --link tc
+		mininet> net.configLinkStatus('h3', 'r2', 'loss 5%')
